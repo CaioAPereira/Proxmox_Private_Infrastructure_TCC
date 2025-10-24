@@ -1,0 +1,35 @@
+# Estrutura esperada do projeto
+
+
+projeto-terraform/
+├── main.tf
+├── variables.tf
+├── terraform.tfvars
+└── modules/
+    └── vm/
+        ├── main.tf
+        ├── variables.tf
+        └── outputs.tf
+
+---------------------------------------
+
+Explicação:
+
+🧩 1. Estrutura e conceito
+
+O diretório modules/vm/ define um módulo reutilizável (nossa "receita de VM").
+
+No main.tf principal, você cria instâncias do módulo com parâmetros diferentes (por exemplo, nginx, db, redis, etc.).
+
+📦 Projeto Terraform (nível raiz)
+│
+├── main.tf               ← define como você usa o módulo
+├── variables.tf          ← variáveis globais do projeto (infra inteira)
+├── terraform.tfvars      ← valores atribuídos às variáveis globais
+│
+└── modules/
+    └── vm/
+        ├── main.tf        ← implementação do módulo (receita da VM)
+        ├── variables.tf   ← variáveis internas (entradas do módulo)
+        └── outputs.tf     ← o que o módulo "devolve" para o nível raiz
+

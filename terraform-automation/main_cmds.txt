@@ -1,0 +1,27 @@
+# Comando para inicializar o terraform
+terraform init
+
+# Comando para planejar o projeto
+terraform plan
+
+# Comando para aplicar o plano do terraform após inicialização ou alterações
+terraform apply
+
+# Comando para destruir todas as VMs criadas
+terraform destroy
+# OBS: Esse comando deleta todos os recursos definidos nos arquivos .tf do projeto atual.
+
+# Comando para remover VM específica
+terraform destroy -target=proxmox_virtual_environment_vm.vm_cloudinit
+
+# Comando para remover mais de uma VM
+terraform destroy -target=proxmox_virtual_environment_vm.vm_nginx
+
+# IMPORTANTE: Para operações de deleção, sempre interessante rodar esse comando para informar o que será removido:
+terraform plan -destroy
+
+# Force Reset
+terraform destroy -auto-approve
+rm -rf .terraform terraform.tfstate*
+terraform init
+terraform apply
