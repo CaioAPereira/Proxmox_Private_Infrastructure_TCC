@@ -52,9 +52,9 @@ resource "local_file" "ansible_inventory" {
   filename = "${path.module}/ansible/hosts.ini"
 
   content = templatefile("${path.module}/inventory.tpl", {
-    # Pega o IP que foi exposto pelo 'modules/vm/outputs.tf'
-    nginx_ip = module.vm_nginx.ip_address
-    db_ip    = module.vm_db.ip_address
+    # Pega o primeiro IP da lista retornada pelo 'modules/vm/outputs.tf'
+    nginx_ip = module.vm_nginx.ip_address[0]
+    db_ip    = module.vm_db.ip_address[0]
     
     # Pega o nome de usuário que você definiu no 'modules/vm/main.tf'
     # Estou assumindo que você passa a mesma var.username para ambos.
