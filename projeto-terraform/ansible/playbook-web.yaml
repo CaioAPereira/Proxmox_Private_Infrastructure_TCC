@@ -1,0 +1,68 @@
+---
+- name: Provisionar Servidor Web (Nginx + Docker)
+  hosts: nginx
+  become: true # Executa as tarefas com privilégios de root (sudo)
+
+  tasks:
+    - name: Atualizar o cache do apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Instalar dependencias essenciais do sistema
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - git
+        state: present
+
+    - name: Instalar o Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Garantir que o Nginx inicie com o sistema
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: Criar diretorio para a chave do Docker
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Adicionar a chave GPG oficial do Docker
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Adicionar o repositorio do Docker
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        state: present
+
+    - name: Instalar o Docker e plugins (Compose)
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+
+    - name: Garantir que o Docker inicie com o sistema
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Adicionar o usuario padrao ao grupo docker (para rodar sem sudo)
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
