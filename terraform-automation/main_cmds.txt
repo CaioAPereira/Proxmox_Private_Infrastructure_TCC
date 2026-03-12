@@ -25,3 +25,20 @@ terraform destroy -auto-approve
 rm -rf .terraform terraform.tfstate*
 terraform init
 terraform apply
+
+# Corrigir problema no template com IPS durante lançamento ansible
+sudo truncate -s 0 /etc/machine-id
+sudo rm /var/lib/dbus/machine-id
+sudo ln -s /etc/machine-id /var/lib/dbus/machine-id
+
+# Tirar a checagem
+export ANSIBLE_HOST_KEY_CHECKING=False
+
+# Teste de comando PING
+ansible all -i hosts.ini -m ping
+
+# Parar o dpkg após primeira iniciação de clonagem através do ansible
+ansible nginx -i hosts.ini -m command -a "dpkg --configure -a" -b
+
+# Iniciar o Playbook
+ansible-playbook -i hosts.ini playbook-web.yml

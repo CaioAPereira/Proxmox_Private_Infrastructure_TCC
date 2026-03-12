@@ -1,0 +1,66 @@
+---
+- name: Provisionar Servidor de Banco de Dados (PostgreSQL)
+  hosts: database
+  become: true # Executa as tarefas com privilegios de root (sudo)
+
+  vars:
+    # A faixa de IPs da sua rede atual onde as VMs estao rodando
+    rede_permitida: "10.131.134.0/24" 
+
+  tasks:
+    - name: Atualizar o cache do apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Instalar o PostgreSQL e ferramentas adicionais
+      apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+        state: present
+
+    - name: Garantir que o servico do PostgreSQL inicie com o sistema
+      service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    # O Ansible vai procurar onde o Ubuntu instalou a configuracao 
+    # (assim funciona pra qualquer versao: 12, 14, 15, 16...)
+    - name: Descobrir o diretorio de configuracao do postgresql.conf
+      find:
+        paths: /etc/postgresql
+        patterns: "postgresql.conf"
+        recurse: yes
+      register: pg_conf_file
+
+    - name: Configurar o PostgreSQL para escutar conexoes externas (listen_addresses)
+      lineinfile:
+        path: "{{ pg_conf_file.files[0].path }}"
+        regexp: "^#?listen_addresses"
+        line: "listen_addresses = '*'"
+      when: pg_conf_file.matched > 0
+      notify: Reiniciar PostgreSQL
+
+    - name: Descobrir o diretorio de configuracao do pg_hba.conf
+      find:
+        paths: /etc/postgresql
+        patterns: "pg_hba.conf"
+        recurse: yes
+      register: pg_hba_file
+
+    - name: Permitir conexoes da rede da VM Web no pg_hba.conf
+      lineinfile:
+        path: "{{ pg_hba_file.files[0].path }}"
+        line: "host    all             all             {{ rede_permitida }}          scram-sha-256"
+        insertafter: EOF
+      when: pg_hba_file.matched > 0
+      notify: Reiniciar PostgreSQL
+
+  # Os Handlers so rodam no final do script se alguma configuracao for alterada
+  handlers:
+    - name: Reiniciar PostgreSQL
+      service:
+        name: postgresql
+        state: restarted
