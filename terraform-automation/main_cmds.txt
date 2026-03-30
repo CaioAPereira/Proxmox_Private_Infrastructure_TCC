@@ -45,3 +45,5 @@ ansible-playbook -i hosts.ini playbook-web.yml
 
 # Erro 01* = Caso de erro ao iniciar o playbook, por versões desatualizadas
 ansible nginx -i hosts.ini -m command -a "apt --fix-broken install -y" -b
+ansible nginx -i hosts.ini -m apt -a "upgrade=dist update_cache=yes" -b
+# Logo após isso, rodar o playbook novamente
