@@ -93,16 +93,21 @@
 
     # ----------------------------------------------------------
     # ETAPA 5: Criar usuário dedicado para a aplicação
-    # A aplicação TaskFlow usará este usuário para se conectar,
-    # evitando uso do superuser 'postgres' em produção.
+    # A aplicação TaskFlow usará este usuário para se conectar.
     # ----------------------------------------------------------
     - name: Criar usuário '{{ taskflow_db_user }}' no PostgreSQL
       community.postgresql.postgresql_user:
-        db: "{{ taskflow_db_name }}"
         name: "{{ taskflow_db_user }}"
         password: "{{ taskflow_db_password }}"
-        priv: "ALL"
         state: present
+      become_user: postgres
+
+    - name: Conceder privilégios ao usuário no banco
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        privs: ALL
+        type: database
       become_user: postgres
 
     # ----------------------------------------------------------
