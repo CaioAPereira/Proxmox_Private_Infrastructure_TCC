@@ -195,23 +195,22 @@
         mode: '0644'
 
     # ----------------------------------------------------------
-    # Subir os containers da aplicação
-    # --build: reconstrói a imagem Node.js se houver mudanças
-    # -d:      modo detached (background)
-    # project_src: diretório onde está o docker-compose.yml
+    # Subir os containers da aplicação usando command
+    # Substituindo community.docker por shell devido à versão
+    # do Ansible no control node
     # ----------------------------------------------------------
     - name: Subir os containers do TaskFlow via Docker Compose
-      community.docker.docker_compose_v2:
-        project_src: "{{ app_dir }}"
-        build: always
-        state: present
+      command: docker compose up -d --build
+      args:
+        chdir: "{{ app_dir }}"
       register: compose_result
+      changed_when: "'Started' in compose_result.stdout or 'Created' in compose_result.stdout"
 
     - name: Verificar se os containers estão rodando
-      community.docker.docker_container_info:
-        name: taskflow-app
-      register: container_info
+      command: docker ps --filter "name=taskflow-app" --format "{{"{{"}} .State {{"}}"}}"
+      register: container_status
+      changed_when: false
 
     - name: Exibir status do container da aplicação
       debug:
-        msg: "TaskFlow App está {{ 'RODANDO ✅' if container_info.container.State.Running else 'PARADO ❌' }}"
+        msg: "TaskFlow App está {{ 'RODANDO ✅' if 'running' in container_status.stdout else 'PARADO ❌' }}"
