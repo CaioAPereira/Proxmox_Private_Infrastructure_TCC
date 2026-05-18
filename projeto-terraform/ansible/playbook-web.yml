@@ -39,13 +39,16 @@
   tasks:
 
     # ----------------------------------------------------------
-    # BLOCO 0: Corrigir dpkg em estado inconsistente
-    # O cloud-init do template pode deixar o dpkg interrompido.
-    # Este comando finaliza qualquer instalacao pendente antes
-    # de tentar instalar novos pacotes.
+    # BLOCO 0: Corrigir dpkg em estado inconsistente e dependências
+    # O cloud-init do template pode deixar o apt/dpkg em um 
+    # estado quebrado por interromper atualizações no boot.
     # ----------------------------------------------------------
     - name: Corrigir dpkg interrompido pelo cloud-init
       command: dpkg --configure -a
+      changed_when: false
+
+    - name: Corrigir dependências quebradas do apt
+      command: apt-get --fix-broken install -y
       changed_when: false
 
     # ----------------------------------------------------------
