@@ -40,7 +40,7 @@ services:
   # Serve também como ponto de cache para arquivos estáticos
   # ------------------------------------------------------------
   nginx:
-    image: nginx:alpine
+    image: mirror.gcr.io/library/nginx:alpine
     container_name: taskflow-nginx
     restart: unless-stopped
     ports:
