@@ -6,7 +6,7 @@
 -- Columns table
 CREATE TABLE IF NOT EXISTS columns (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
+    name VARCHAR(100) NOT NULL UNIQUE,
     position INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -35,4 +35,5 @@ INSERT INTO columns (name, position) VALUES
     ('A Fazer', 0),
     ('Em Progresso', 1),
     ('Concluído', 2)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (name) DO NOTHING;
+
