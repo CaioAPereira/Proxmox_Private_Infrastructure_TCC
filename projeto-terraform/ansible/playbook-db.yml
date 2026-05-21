@@ -179,6 +179,41 @@
         path: /tmp/taskflow_init.sql
       become_user: postgres
 
+    # ----------------------------------------------------------
+    # ETAPA 11: Garantir privilégios às tabelas e sequências
+    # Necessário porque o schema é aplicado como 'postgres' (owner),
+    # mas a aplicação conecta como 'taskflow_user'.
+    # ----------------------------------------------------------
+    - name: Conceder privilégios de uso no schema public ao usuário
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        objs: public
+        privs: USAGE,CREATE
+        type: schema
+      become_user: postgres
+
+    - name: Conceder privilégios em todas as tabelas no schema public ao usuário
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        objs: ALL_IN_SCHEMA
+        schema: public
+        privs: ALL
+        type: table
+      become_user: postgres
+
+    - name: Conceder privilégios em todas as sequences no schema public ao usuário
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        objs: ALL_IN_SCHEMA
+        schema: public
+        privs: ALL
+        type: sequence
+      become_user: postgres
+
+
   # ----------------------------------------------------------
   # HANDLERS: Executados apenas se alguma task notificou
   # O restart do PostgreSQL aplica as mudanças de configuração.
