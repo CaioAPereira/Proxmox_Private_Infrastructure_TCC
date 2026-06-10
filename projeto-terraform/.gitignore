@@ -1,0 +1,33 @@
+# ============================================================
+#  .gitignore — Projeto Terraform + Ansible + Proxmox
+# ============================================================
+
+# ----------------------------------------------------------
+# Terraform: diretórios e arquivos gerados automaticamente
+# ----------------------------------------------------------
+.terraform/                   # Cache de providers e módulos baixados
+.terraform.lock.hcl           # Lock file de versões de providers (pode versionar se quiser reproducibilidade)
+*.tfstate                     # Estado atual da infra — contém dados sensíveis, NÃO versionar
+*.tfstate.backup              # Backup automático do tfstate
+
+# ----------------------------------------------------------
+# Variáveis sensíveis (senhas, tokens, chaves)
+# NÃO devem entrar no repositório.
+# Use terraform.tfvars.example como template público.
+# ----------------------------------------------------------
+terraform.tfvars
+
+# ----------------------------------------------------------
+# Ansible: inventário gerado dinamicamente pelo Terraform
+# Contém IPs reais das VMs provisionadas
+# ----------------------------------------------------------
+ansible/hosts.ini
+ansible/terraform.tfstate
+
+# ----------------------------------------------------------
+# Arquivos temporários / lixo
+# ----------------------------------------------------------
+ansible/teste.txt
+*.tmp
+*.bak
+.DS_Store

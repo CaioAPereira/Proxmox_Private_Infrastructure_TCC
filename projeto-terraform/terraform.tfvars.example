@@ -1,0 +1,16 @@
+# ============================================================
+#  terraform.tfvars.example — Template público de variáveis
+#
+#  Copie este arquivo para terraform.tfvars e preencha com
+#  os valores reais. O .tfvars real está no .gitignore.
+# ============================================================
+
+proxmox_api_token = "user@pve!token-name=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+node_name    = "pve"
+template_id  = 9000
+datastore_id = "local-lvm"
+
+username       = "ubuntu"
+password       = "sua-senha-segura"
+ssh_public_key = "~/.ssh/id_rsa.pub"

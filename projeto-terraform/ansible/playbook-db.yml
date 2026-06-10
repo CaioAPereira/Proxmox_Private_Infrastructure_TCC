@@ -1,41 +1,134 @@
 ---
+# ============================================================
+#  playbook-db.yml — Provisionamento da VM de Banco de Dados
+#
+#  Este playbook configura o PostgreSQL na vm-db para:
+#    1. Instalar e iniciar o PostgreSQL
+#    2. Criar o banco de dados e usuário dedicado ao TaskFlow
+#    3. Executar o schema da aplicação (tabelas e índices)
+#    4. Configurar acesso externo (listen em todas as interfaces)
+#    5. Liberar conexões da sub-rede da VM web no pg_hba.conf
+#
+#  Pré-requisito: hosts.ini gerado pelo Terraform (terraform apply)
+#  Execução:
+#    ansible-playbook -i ansible/hosts.ini ansible/playbook-db.yml
+# ============================================================
+
 - name: Provisionar Servidor de Banco de Dados (PostgreSQL)
   hosts: database
-  become: true # Executa as tarefas com privilegios de root (sudo)
+  become: true  # Executa todas as tarefas como root (sudo)
 
   vars:
-    # A faixa de IPs da sua rede atual onde as VMs estao rodando
-    rede_permitida: "10.131.134.0/24" 
+    # ----------------------------------------------------------
+    # Sub-rede da VM web — liberada para acessar o PostgreSQL.
+    # Deve coincidir com a faixa de IP onde a vm-nginx está.
+    # ----------------------------------------------------------
+    rede_permitida: "10.131.134.0/24"
+
+    # ----------------------------------------------------------
+    # Credenciais do banco de dados para a aplicação TaskFlow.
+    # Em produção, use ansible-vault para criptografar esses valores.
+    # ----------------------------------------------------------
+    taskflow_db_name: "taskflow"
+    taskflow_db_user: "taskflow_user"
+    taskflow_db_password: "taskflow_pass"
 
   tasks:
+
+    # ----------------------------------------------------------
+    # ETAPA 0: Corrigir dpkg em estado inconsistente e dependências
+    # O cloud-init do template pode deixar o apt/dpkg em um 
+    # estado quebrado por interromper atualizações no boot.
+    # ----------------------------------------------------------
+    - name: Corrigir dpkg interrompido pelo cloud-init
+      command: dpkg --configure -a
+      changed_when: false
+
+    - name: Corrigir dependências quebradas do apt
+      command: apt-get --fix-broken install -y
+      changed_when: false
+
+    # ----------------------------------------------------------
+    # ETAPA 1: Atualizar o cache de pacotes
+    # cache_valid_time: evita re-download se atualizado há menos de 1h
+    # ----------------------------------------------------------
     - name: Atualizar o cache do apt
       apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Instalar o PostgreSQL e ferramentas adicionais
+    # ----------------------------------------------------------
+    # ETAPA 2: Instalar PostgreSQL e utilitários adicionais
+    # postgresql-contrib: módulos extras (ex: pg_stat_statements)
+    # python3-psycopg2: driver Python necessário para o módulo
+    #                   community.postgresql do Ansible
+    # ----------------------------------------------------------
+    - name: Instalar o PostgreSQL e dependências
       apt:
         name:
           - postgresql
           - postgresql-contrib
+          - python3-psycopg2
         state: present
 
-    - name: Garantir que o servico do PostgreSQL inicie com o sistema
+    # ----------------------------------------------------------
+    # ETAPA 3: Garantir que o serviço PostgreSQL esteja rodando
+    # e configurado para iniciar automaticamente no boot
+    # ----------------------------------------------------------
+    - name: Garantir que o PostgreSQL inicie com o sistema
       service:
         name: postgresql
         state: started
         enabled: yes
 
-    # O Ansible vai procurar onde o Ubuntu instalou a configuracao 
-    # (assim funciona pra qualquer versao: 12, 14, 15, 16...)
-    - name: Descobrir o diretorio de configuracao do postgresql.conf
+    # ----------------------------------------------------------
+    # ETAPA 4: Criar o banco de dados da aplicação
+    # Executado como usuário 'postgres' (superuser padrão do PG)
+    # ----------------------------------------------------------
+    - name: Criar o banco de dados '{{ taskflow_db_name }}'
+      community.postgresql.postgresql_db:
+        name: "{{ taskflow_db_name }}"
+        state: present
+      become_user: postgres
+
+    # ----------------------------------------------------------
+    # ETAPA 5: Criar usuário dedicado para a aplicação
+    # A aplicação TaskFlow usará este usuário para se conectar.
+    # ----------------------------------------------------------
+    - name: Criar usuário '{{ taskflow_db_user }}' no PostgreSQL
+      community.postgresql.postgresql_user:
+        name: "{{ taskflow_db_user }}"
+        password: "{{ taskflow_db_password }}"
+        state: present
+      become_user: postgres
+
+    - name: Conceder privilégios ao usuário no banco
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        privs: ALL
+        type: database
+      become_user: postgres
+
+    # ----------------------------------------------------------
+    # ETAPA 6: Localizar o postgresql.conf dinamicamente
+    # O path varia conforme a versão instalada (ex: /etc/postgresql/16/)
+    # O `find` descobre o caminho correto independente da versão.
+    # ----------------------------------------------------------
+    - name: Localizar o arquivo postgresql.conf
       find:
         paths: /etc/postgresql
         patterns: "postgresql.conf"
         recurse: yes
       register: pg_conf_file
 
-    - name: Configurar o PostgreSQL para escutar conexoes externas (listen_addresses)
+    # ----------------------------------------------------------
+    # ETAPA 7: Configurar PostgreSQL para escutar em todas as interfaces
+    # Por padrão, o PG só escuta em localhost — precisamos de '*'
+    # para aceitar conexões da VM web.
+    # A diretiva `notify` aciona o handler de restart ao final.
+    # ----------------------------------------------------------
+    - name: Configurar listen_addresses para aceitar conexões externas
       lineinfile:
         path: "{{ pg_conf_file.files[0].path }}"
         regexp: "^#?listen_addresses"
@@ -43,14 +136,24 @@
       when: pg_conf_file.matched > 0
       notify: Reiniciar PostgreSQL
 
-    - name: Descobrir o diretorio de configuracao do pg_hba.conf
+    # ----------------------------------------------------------
+    # ETAPA 8: Localizar o pg_hba.conf dinamicamente
+    # Controla quais IPs/usuários podem se conectar ao banco
+    # ----------------------------------------------------------
+    - name: Localizar o arquivo pg_hba.conf
       find:
         paths: /etc/postgresql
         patterns: "pg_hba.conf"
         recurse: yes
       register: pg_hba_file
 
-    - name: Permitir conexoes da rede da VM Web no pg_hba.conf
+    # ----------------------------------------------------------
+    # ETAPA 9: Liberar conexões da rede da VM web no pg_hba.conf
+    # scram-sha-256 = método de autenticação seguro (padrão PG 14+)
+    # A linha inserida permite que qualquer usuário da sub-rede
+    # se autentique com senha no banco de dados.
+    # ----------------------------------------------------------
+    - name: Liberar conexões da VM web ({{ rede_permitida }}) no pg_hba.conf
       lineinfile:
         path: "{{ pg_hba_file.files[0].path }}"
         line: "host    all             all             {{ rede_permitida }}          scram-sha-256"
@@ -58,7 +161,63 @@
       when: pg_hba_file.matched > 0
       notify: Reiniciar PostgreSQL
 
-  # Os Handlers so rodam no final do script se alguma configuracao for alterada
+    # ----------------------------------------------------------
+    # ETAPA 10: Aplicar o schema do banco de dados TaskFlow
+    # Cria as tabelas (columns, tasks), índices e dados iniciais.
+    # O arquivo schema é copiado do controle para a VM e então
+    # executado via psql.
+    # ----------------------------------------------------------
+    - name: Copiar schema SQL do TaskFlow para a VM
+      copy:
+        src: files/taskflow/docker/init.sql
+        dest: /tmp/taskflow_init.sql
+        mode: '0644'
+
+    - name: Aplicar o schema no banco de dados '{{ taskflow_db_name }}'
+      community.postgresql.postgresql_script:
+        db: "{{ taskflow_db_name }}"
+        path: /tmp/taskflow_init.sql
+      become_user: postgres
+
+    # ----------------------------------------------------------
+    # ETAPA 11: Garantir privilégios às tabelas e sequências
+    # Necessário porque o schema é aplicado como 'postgres' (owner),
+    # mas a aplicação conecta como 'taskflow_user'.
+    # ----------------------------------------------------------
+    - name: Conceder privilégios de uso no schema public ao usuário
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        objs: public
+        privs: USAGE,CREATE
+        type: schema
+      become_user: postgres
+
+    - name: Conceder privilégios em todas as tabelas no schema public ao usuário
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        objs: ALL_IN_SCHEMA
+        schema: public
+        privs: ALL
+        type: table
+      become_user: postgres
+
+    - name: Conceder privilégios em todas as sequences no schema public ao usuário
+      community.postgresql.postgresql_privs:
+        db: "{{ taskflow_db_name }}"
+        role: "{{ taskflow_db_user }}"
+        objs: ALL_IN_SCHEMA
+        schema: public
+        privs: ALL
+        type: sequence
+      become_user: postgres
+
+
+  # ----------------------------------------------------------
+  # HANDLERS: Executados apenas se alguma task notificou
+  # O restart do PostgreSQL aplica as mudanças de configuração.
+  # ----------------------------------------------------------
   handlers:
     - name: Reiniciar PostgreSQL
       service:

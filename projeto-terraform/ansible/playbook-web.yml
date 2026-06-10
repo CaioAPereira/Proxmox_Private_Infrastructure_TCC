@@ -1,36 +1,82 @@
 ---
-- name: Provisionar Servidor Web (Nginx + Docker)
+# ============================================================
+#  playbook-web.yml — Provisionamento da VM Web
+#
+#  Este playbook configura a vm-nginx com:
+#    1. Docker Engine + Docker Compose Plugin
+#    2. Aplicação TaskFlow (Node.js + Nginx como proxy reverso)
+#       em containers Docker, conectada ao PostgreSQL externo
+#       rodando na vm-db (banco de dados separado)
+#
+#  A separação web/db é intencional: documenta a comunicação
+#  de rede entre VMs distintas — objetivo central do TCC.
+#
+#  Pré-requisito: playbook-db.yml já executado com sucesso
+#  Execução:
+#    ansible-playbook -i ansible/hosts.ini ansible/playbook-web.yml
+# ============================================================
+
+- name: Provisionar Servidor Web (Docker + TaskFlow)
   hosts: nginx
-  become: true # Executa as tarefas com privilégios de root (sudo)
+  become: true  # Executa todas as tarefas como root (sudo)
+
+  vars:
+    # ----------------------------------------------------------
+    # Diretório de instalação da aplicação na VM
+    # ----------------------------------------------------------
+    app_dir: /opt/taskflow
+
+    # ----------------------------------------------------------
+    # Credenciais do banco de dados PostgreSQL externo (vm-db).
+    # db_server_ip é injetado pelo inventory.tpl (Terraform).
+    # Deve coincidir com os valores definidos no playbook-db.yml.
+    # ----------------------------------------------------------
+    taskflow_db_name: "taskflow"
+    taskflow_db_user: "taskflow_user"
+    taskflow_db_password: "taskflow_pass"
+    taskflow_db_port: 5432
 
   tasks:
+
+    # ----------------------------------------------------------
+    # BLOCO 0: Corrigir dpkg em estado inconsistente e dependências
+    # O cloud-init do template pode deixar o apt/dpkg em um 
+    # estado quebrado por interromper atualizações no boot.
+    # ----------------------------------------------------------
+    - name: Corrigir dpkg interrompido pelo cloud-init
+      command: dpkg --configure -a
+      changed_when: false
+
+    - name: Corrigir dependências quebradas do apt
+      command: apt-get --fix-broken install -y
+      changed_when: false
+
+    # ----------------------------------------------------------
+    # BLOCO 1: Atualização e Dependências do Sistema
+    # ----------------------------------------------------------
+
     - name: Atualizar o cache do apt
       apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Instalar dependencias essenciais do sistema
+    - name: Instalar dependências essenciais do sistema
       apt:
         name:
-          - apt-transport-https
-          - ca-certificates
-          - curl
-          - software-properties-common
-          - git
+          - apt-transport-https    # Permite apt via HTTPS
+          - ca-certificates        # Certificados CA do sistema
+          - curl                   # Download de scripts/chaves
+          - software-properties-common  # Utilitário de repositórios
+          - git                    # Controle de versão (opcional)
         state: present
 
-    - name: Instalar o Nginx
-      apt:
-        name: nginx
-        state: present
+    # ----------------------------------------------------------
+    # BLOCO 2: Instalação do Docker Engine
+    # Segue o procedimento oficial Docker para Ubuntu:
+    #   Adicionar GPG key → Adicionar repositório → Instalar
+    # ----------------------------------------------------------
 
-    - name: Garantir que o Nginx inicie com o sistema
-      service:
-        name: nginx
-        state: started
-        enabled: yes
-
-    - name: Criar diretorio para a chave do Docker
+    - name: Criar diretório para chaves APT
       file:
         path: /etc/apt/keyrings
         state: directory
@@ -41,19 +87,20 @@
         url: https://download.docker.com/linux/ubuntu/gpg
         state: present
 
-    - name: Adicionar o repositorio do Docker
+    - name: Adicionar o repositório oficial do Docker
       apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
         state: present
 
-    - name: Instalar o Docker e plugins (Compose)
+    - name: Instalar Docker Engine e Docker Compose Plugin
       apt:
         name:
-          - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - docker-compose-plugin
+          - docker-ce              # Docker daemon
+          - docker-ce-cli          # CLI do Docker
+          - containerd.io          # Runtime de containers
+          - docker-compose-plugin  # `docker compose` (v2, sem hífen)
         state: present
+        update_cache: yes
 
     - name: Garantir que o Docker inicie com o sistema
       service:
@@ -61,8 +108,109 @@
         state: started
         enabled: yes
 
-    - name: Adicionar o usuario padrao ao grupo docker (para rodar sem sudo)
+    - name: Adicionar o usuário padrão ao grupo docker
+      # Permite rodar `docker` sem sudo após relogin
       user:
         name: "{{ ansible_user }}"
         groups: docker
         append: yes
+
+    # ----------------------------------------------------------
+    # BLOCO 3: Deploy da Aplicação TaskFlow
+    #
+    # Copia os arquivos da aplicação para /opt/taskflow na VM
+    # e sobe os containers via Docker Compose.
+    #
+    # A aplicação usa PostgreSQL EXTERNO (vm-db), portanto:
+    # - O docker-compose NÃO inclui serviço de banco de dados
+    # - DB_HOST aponta para o IP da vm-db ({{ db_server_ip }})
+    # - O IP é injetado automaticamente pelo inventário Ansible
+    # ----------------------------------------------------------
+
+    - name: Criar diretório da aplicação em {{ app_dir }}
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Criar subdiretórios necessários da aplicação
+      file:
+        path: "{{ app_dir }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - server
+        - server/db
+        - server/routes
+        - public
+        - nginx
+        - docker
+
+    - name: Copiar Dockerfile da aplicação
+      copy:
+        src: files/taskflow/Dockerfile
+        dest: "{{ app_dir }}/Dockerfile"
+
+    - name: Copiar package.json e package-lock.json
+      copy:
+        src: "files/taskflow/{{ item }}"
+        dest: "{{ app_dir }}/{{ item }}"
+      loop:
+        - package.json
+        - package-lock.json
+
+    - name: Copiar arquivos do servidor Node.js
+      copy:
+        src: "files/taskflow/server/"
+        dest: "{{ app_dir }}/server/"
+
+    - name: Copiar arquivos do frontend (HTML/CSS/JS)
+      copy:
+        src: "files/taskflow/public/"
+        dest: "{{ app_dir }}/public/"
+
+    - name: Copiar configuração do Nginx (proxy reverso)
+      copy:
+        src: files/taskflow/nginx/nginx.conf
+        dest: "{{ app_dir }}/nginx/nginx.conf"
+
+    - name: Copiar script SQL de inicialização do banco
+      copy:
+        src: files/taskflow/docker/init.sql
+        dest: "{{ app_dir }}/docker/init.sql"
+
+    # ----------------------------------------------------------
+    # Gerar o docker-compose.yml na VM com as variáveis corretas
+    #
+    # O template usa:
+    #   db_server_ip → IP real da vm-db (do inventário Ansible)
+    #   taskflow_db_* → credenciais do banco de dados
+    #
+    # Resultado: compose sem serviço 'db' (banco é externo)
+    # ----------------------------------------------------------
+    - name: Gerar docker-compose.yml com IP do banco de dados
+      template:
+        src: templates/taskflow-compose.yml.j2
+        dest: "{{ app_dir }}/docker-compose.yml"
+        mode: '0644'
+
+    # ----------------------------------------------------------
+    # Subir os containers da aplicação usando command
+    # Substituindo community.docker por shell devido à versão
+    # do Ansible no control node
+    # ----------------------------------------------------------
+    - name: Subir os containers do TaskFlow via Docker Compose
+      command: docker compose up -d --build
+      args:
+        chdir: "{{ app_dir }}"
+      register: compose_result
+      changed_when: "'Started' in compose_result.stdout or 'Created' in compose_result.stdout"
+
+    - name: Verificar se os containers estão rodando
+      command: docker ps --filter "name=taskflow-app" --format "{{"{{"}} .State {{"}}"}}"
+      register: container_status
+      changed_when: false
+
+    - name: Exibir status do container da aplicação
+      debug:
+        msg: "TaskFlow App está {{ 'RODANDO ✅' if 'running' in container_status.stdout else 'PARADO ❌' }}"
